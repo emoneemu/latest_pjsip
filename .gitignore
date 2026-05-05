@@ -1,0 +1,54 @@
+# Built outputs
+/build
+app/build
+
+# Gradle
+.gradle
+gradle/wrapper/gradle-wrapper.jar
+
+# Local config (machine-specific, never share)
+local.properties
+
+# Android Studio / IntelliJ — machine-specific IDE state
+*.iml
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/deploymentTargetSelector.xml
+
+# macOS
+.DS_Store
+
+# Native build intermediates
+.externalNativeBuild
+.cxx
+
+# Captures (profiling/screenshots)
+/captures
+
+# Keystore / signing secrets — NEVER commit these
+*.jks
+*.keystore
+keystore.properties
+release/
+
+
+# APK/AAB outputs
+*.apk
+*.aab
+*.ap_
+
+# Log files
+*.log
+
+# Google Services (contains API keys)
+google-services.json
+
+# Proguard
+proguard/
+
+# OS
+Thumbs.db
