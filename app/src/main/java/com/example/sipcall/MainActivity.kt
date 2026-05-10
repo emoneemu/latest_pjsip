@@ -4,8 +4,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -14,13 +16,14 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity(), PjsipManager.Listener {
 
-    private lateinit var pjsip: PjsipManager
     private lateinit var audioManager: AudioManager
 
     private lateinit var serverIpInput: EditText
     private lateinit var usernameInput: EditText
     private lateinit var passwordInput: EditText
     private lateinit var destNumberInput: EditText
+    private lateinit var tlsCheckBox: CheckBox
+    private lateinit var srtpCheckBox: CheckBox
     private lateinit var registerBtn: Button
     private lateinit var callBtn: Button
     private lateinit var hangupBtn: Button
@@ -32,6 +35,11 @@ class MainActivity : AppCompatActivity(), PjsipManager.Listener {
     private var savedMicMute: Boolean = false
     private var voiceModeActive: Boolean = false
 
+    // PJSIP now lives inside SipCallService (required for Samsung Knox to
+    // allow outbound UDP). The activity reads it through this getter.
+    private val pjsip: PjsipManager?
+        get() = SipCallService.pjsipInstance
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -42,51 +50,67 @@ class MainActivity : AppCompatActivity(), PjsipManager.Listener {
         usernameInput = findViewById(R.id.username)
         passwordInput = findViewById(R.id.password)
         destNumberInput = findViewById(R.id.dest_number)
-        registerBtn = findViewById(R.id.btn_register)
-        callBtn = findViewById(R.id.btn_call)
-        hangupBtn = findViewById(R.id.btn_hangup)
+        tlsCheckBox  = findViewById(R.id.chk_tls)
+        srtpCheckBox = findViewById(R.id.chk_srtp)
+        registerBtn  = findViewById(R.id.btn_register)
+        callBtn      = findViewById(R.id.btn_call)
+        hangupBtn    = findViewById(R.id.btn_hangup)
         statusView = findViewById(R.id.status)
         logView = findViewById(R.id.log)
 
-        serverIpInput.setText("103.209.42.79")
-        usernameInput.setText("09638917840")
+        serverIpInput.setText("esports.hobenaki.com")
+        usernameInput.setText("09638917841")
         passwordInput.setText("1234")
         destNumberInput.setText("01673779266")
 
         ensurePermissions()
 
-        pjsip = PjsipManager(this)
-        pjsip.start()
+        // Register THIS activity as the UI listener for service callbacks.
+        SipCallService.uiListener = this
+
+        // Start the phoneCall foreground service. It owns PJSIP.
+        // Without this service, Samsung's Knox layer blocks outbound UDP.
+        SipCallService.start(this)
 
         registerBtn.setOnClickListener {
-            pjsip.register(
+            pjsip?.register(
                 username = usernameInput.text.toString().trim(),
                 password = passwordInput.text.toString(),
-                serverIp = serverIpInput.text.toString().trim()
-            )
+                serverIp = serverIpInput.text.toString().trim(),
+                serverPort = if (tlsCheckBox.isChecked) 5061 else 5060,
+                useTls  = tlsCheckBox.isChecked,
+                useSrtp = srtpCheckBox.isChecked
+            ) ?: appendLog("Service not ready yet — try again in a moment")
         }
         callBtn.setOnClickListener {
             // Enter voice mode BEFORE PJSIP opens the audio device. Outbound only.
             enterVoiceCallMode()
-            pjsip.call(destNumberInput.text.toString().trim())
+            pjsip?.call(destNumberInput.text.toString().trim())
+                ?: appendLog("Service not ready")
         }
         hangupBtn.setOnClickListener {
-            pjsip.hangup()
+            pjsip?.hangup()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         if (voiceModeActive) restoreAudioMode()
-        pjsip.shutdown()
+        // Don't shut down PJSIP / stop the service here — it must keep
+        // running to receive incoming calls when the activity is gone.
+        SipCallService.uiListener = null
     }
 
     private fun ensurePermissions() {
-        val needed = arrayOf(
+        val list = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.INTERNET,
             Manifest.permission.MODIFY_AUDIO_SETTINGS
-        ).filter {
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val needed = list.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
         if (needed.isNotEmpty()) {

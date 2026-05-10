@@ -72,6 +72,7 @@ class PjsipManager(private val listener: Listener) {
     private var endpoint: Endpoint? = null
     private var account: SipAccount? = null
     private var currentCall: SipCall? = null
+    private var currentUseTls: Boolean = false
 
     // STRONG references — do NOT let these go out of scope.
     private var logWriter: PjsipLogWriter? = null
@@ -101,12 +102,12 @@ class PjsipManager(private val listener: Listener) {
             cfg.uaConfig.stunServer.add("stun1.l.google.com:19302")
 
             // Media config — important for Android audio.
-            cfg.medConfig.clockRate = 32000
-            cfg.medConfig.sndClockRate = 32000
+            cfg.medConfig.clockRate = 8000
+            cfg.medConfig.sndClockRate = 8000
             cfg.medConfig.channelCount = 1
-            cfg.medConfig.audioFramePtime = 40
+            //cfg.medConfig.audioFramePtime = 60
             cfg.medConfig.quality = 10      // max PJSIP signal processing quality
-            cfg.medConfig.jbMax   = 100     // 300 ms ceiling absorbs WiFi burst losses
+            cfg.medConfig.jbMax   = 200     // 300 ms ceiling absorbs WiFi burst losses
             // Disable PJSIP's software echo canceller — Android's
             // MODE_IN_COMMUNICATION already provides hardware AEC.
             cfg.medConfig.ecTailLen = 0
@@ -122,6 +123,28 @@ class PjsipManager(private val listener: Listener) {
 
             ep.libStart()
             Log.d(TAG, "PJSIP endpoint started")
+
+            // TLS transport on port 5061 — encrypted SIP signalling.
+            // Required for SRTP with srtpSecureSignaling=1 and helps bypass
+            // ISP-level VoIP blocks in regions like UAE/KSA/Qatar where plain
+            // UDP port 5060 is actively filtered.
+            // Falls back gracefully if pjsua2 was not built with TLS support.
+            try {
+                val tlsCfg = TransportConfig()
+                tlsCfg.port = 5061
+                val tls = tlsCfg.tlsConfig
+                // TLS 1.2 — widest compatibility; FreeSWITCH defaults to TLS 1.2.
+                tls.method = pjsip_ssl_method.PJSIP_TLSV1_2_METHOD
+                // Accept self-signed / internal CA certs common on private PBX installs.
+                // Set true + supply caListFile when connecting to a public server with a
+                // real cert (prevents MITM).
+                tls.verifyServer = false
+                tlsCfg.tlsConfig = tls
+                ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_TLS, tlsCfg)
+                listener.onLog("TLS transport ready on port 5061")
+            } catch (e: Exception) {
+                listener.onLog("TLS transport unavailable (pjsua2 not built with TLS support?): ${e.message}")
+            }
 
             // Prefer Opus for low bandwidth (~1.5 MB/5 min at 24 kbps + 20 ms ptime + VAD).
             // PCMU kept as last-resort fallback if the FS internal profile lacks Opus.
@@ -147,7 +170,16 @@ class PjsipManager(private val listener: Listener) {
         username: String,
         password: String,
         serverIp: String,
-        serverPort: Int = 5060
+        serverPort: Int = 5060,
+        // useTls=true  → SIP over TLS (port 5061 by convention).
+        //   Encrypts signalling; helps bypass ISP VoIP blocks in restricted regions.
+        //   Requires FreeSWITCH TLS profile enabled and a TLS transport created above.
+        // useSrtp=true → Encrypts RTP audio via SRTP (SDES key exchange in SDP).
+        //   With useTls=true, srtpSecureSignaling=1 — keys stay inside the TLS tunnel.
+        //   With useTls=false, srtpSecureSignaling=0 — SRTP still works but keys
+        //   travel in plaintext SDP (acceptable on trusted LANs, not on public internet).
+        useTls: Boolean = false,
+        useSrtp: Boolean = false
     ) {
         val ep = endpoint ?: run {
             listener.onLog("Endpoint not ready — did you call start()?")
@@ -163,9 +195,11 @@ class PjsipManager(private val listener: Listener) {
         account = null
 
         try {
+            val transport = if (useTls) ";transport=tls" else ""
+
             val acfg = AccountConfig()
             acfg.idUri = "sip:$username@$serverIp"
-            acfg.regConfig.registrarUri = "sip:$serverIp:$serverPort"
+            acfg.regConfig.registrarUri = "sip:$serverIp:$serverPort$transport"
             acfg.regConfig.registerOnAdd = true
             acfg.regConfig.timeoutSec = 300
 
@@ -177,20 +211,28 @@ class PjsipManager(private val listener: Listener) {
             // INVITE timeouts on flaky carriers.
             acfg.natConfig.iceEnabled = false
 
-            // SRTP — mandatory, signalled via SIP (SDES key exchange)
-            acfg.mediaConfig.srtpUse = pjmedia_srtp_use.PJMEDIA_SRTP_MANDATORY
-            acfg.mediaConfig.srtpSecureSignaling = 0  // 1 = SDES (no TLS required)
-
             // Outbound proxy with loose-routing — keeps signalling on the
             // same path FreeSWITCH expects.
-            acfg.sipConfig.proxies.add("sip:$serverIp:$serverPort;lr")
+            acfg.sipConfig.proxies.add("sip:$serverIp:$serverPort$transport;lr")
+
+            // SRTP — encrypt the RTP audio stream.
+            // MANDATORY means the call fails rather than fall back to plain RTP.
+            // srtpSecureSignaling=1 requires the key exchange (SDP) to travel
+            // inside a TLS tunnel, preventing MITM decryption of the media keys.
+            if (useSrtp) {
+                acfg.mediaConfig.srtpUse = pjmedia_srtp_use.PJMEDIA_SRTP_MANDATORY
+                acfg.mediaConfig.srtpSecureSignaling = if (useTls) 1 else 0
+            }
 
             val acc = SipAccount(listener, this, ep)
-            listener.onLog("Creating account sip:$username@$serverIp ...")
+            val proto = if (useTls) "TLS" else "UDP"
+            val security = if (useSrtp) "+SRTP" else ""
+            listener.onLog("Creating account sip:$username@$serverIp [$proto$security] ...")
             acc.create(acfg)
             account = acc
+            currentUseTls = useTls
 
-            listener.onLog("Register request sent as $username → sip:$serverIp:$serverPort")
+            listener.onLog("Register request sent as $username → sip:$serverIp:$serverPort [$proto$security]")
         } catch (e: Throwable) {
             Log.e(TAG, "register() failed", e)
             listener.onLog("Register failed: ${e.message}")
@@ -253,8 +295,8 @@ class PjsipManager(private val listener: Listener) {
             // 20 ms ptime: loses only 20 ms per dropped packet (vs 40 ms) and
             // activates Opus in-band FEC (packet_loss > 0 requires ptime <= 20 ms).
             val opusCfg = ep.codecOpusConfig
-            opusCfg.bit_rate    = 32000
-            opusCfg.frm_ptime   = 40
+            opusCfg.bit_rate    = 8000
+            //opusCfg.frm_ptime   = 60
             opusCfg.channel_cnt = 1
             // Opus FEC: embeds a low-bitrate copy of the previous frame so the
             // receiver can reconstruct it if that packet was lost. Tells the
@@ -263,7 +305,7 @@ class PjsipManager(private val listener: Listener) {
             ep.setCodecOpusConfig(opusCfg)
 
             val param = ep.codecGetParam("opus/48000")
-            param.setting.vad  = true   // DTX — no RTP during silence
+            param.setting.vad  = false   // DTX — no RTP during silence
             param.setting.plc  = true   // interpolate lost frames
             param.setting.penh = true   // perceptual post-filter (clarity)
             ep.codecSetParam("opus/48000", param)
@@ -292,7 +334,8 @@ class PjsipManager(private val listener: Listener) {
         currentCall = null
 
         try {
-            val dest = "sip:$destNumber@${extractHostFromAccount(acc)}"
+            val transport = extractTransportFromAccount(acc)
+            val dest = "sip:$destNumber@${extractHostFromAccount(acc)}$transport"
             val call = SipCall(acc, listener, this, -1)
             val prm = CallOpParam(true)
             prm.opt.audioCount = 1
@@ -316,6 +359,9 @@ class PjsipManager(private val listener: Listener) {
             "localhost"
         }
     }
+
+    private fun extractTransportFromAccount(@Suppress("UNUSED_PARAMETER") acc: SipAccount): String =
+        if (currentUseTls) ";transport=tls" else ""
 
     /**
      * Called by SipAccount.onIncomingCall (PJSIP worker thread) after it

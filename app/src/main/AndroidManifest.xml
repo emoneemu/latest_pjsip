@@ -1,28 +1,66 @@
-<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AndroidManifest.xml — required additions for Samsung-compatible VoIP.
+
+  Merge these into your existing manifest. The two critical things are:
+    1. The FOREGROUND_SERVICE_PHONE_CALL permission
+    2. The <service> declaration with foregroundServiceType="phoneCall"
+
+  Without both, Samsung's Knox layer will block outbound UDP from the
+  app's sockets and you'll get EPERM (status=120001) on every send.
+-->
+
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.sipcall">
 
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- Audio -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Power management -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Foreground service — REQUIRED for Samsung -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+
+    <!-- VoIP framework integration -->
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+
+    <!-- Notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
-        android:label="SipCall"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat">
 
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          The phoneCall foreground service.
+          Samsung Knox checks foregroundServiceType="phoneCall" specifically
+          when deciding whether to allow outbound UDP. Any other type
+          (e.g. "dataSync", "mediaPlayback") will NOT lift the block.
+        -->
+        <service
+            android:name=".SipCallService"
+            android:foregroundServiceType="phoneCall"
+            android:exported="false" />
+
     </application>
 </manifest>

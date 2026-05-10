@@ -47,6 +47,27 @@
             android:layout_height="wrap_content"
             android:inputType="textPassword" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <CheckBox
+                android:id="@+id/chk_tls"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="TLS (5061)" />
+
+            <CheckBox
+                android:id="@+id/chk_srtp"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="SRTP" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/btn_register"
             android:layout_width="match_parent"
