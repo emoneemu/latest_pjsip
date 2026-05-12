@@ -2,6 +2,7 @@ package com.example.sipcall
 
 import android.util.Log
 import org.pjsip.pjsua2.*
+import android.content.Context
 
 /**
  * PjsipManager wraps the PJSUA2 endpoint, account, and call.
@@ -24,7 +25,7 @@ import org.pjsip.pjsua2.*
  * Once we own the Call object, we either answer (200 OK) or hangup
  * cleanly through it.
  */
-class PjsipManager(private val listener: Listener) {
+class PjsipManager(private val appContext: Context,private val listener: Listener) {
 
     interface Listener {
         fun onRegState(code: Int, reason: String, registered: Boolean)
@@ -77,6 +78,13 @@ class PjsipManager(private val listener: Listener) {
     // STRONG references — do NOT let these go out of scope.
     private var logWriter: PjsipLogWriter? = null
     private var epConfig: EpConfig? = null
+
+    private fun readRawText(resourceId: Int): String {
+        return appContext.resources.openRawResource(resourceId)
+            .bufferedReader()
+            .use { it.readText() }
+    }
+
 
     fun start() {
         if (endpoint != null) return
@@ -134,11 +142,16 @@ class PjsipManager(private val listener: Listener) {
                 tlsCfg.port = 5061
                 val tls = tlsCfg.tlsConfig
                 // TLS 1.2 — widest compatibility; FreeSWITCH defaults to TLS 1.2.
-                tls.method = pjsip_ssl_method.PJSIP_TLSV1_2_METHOD
+                //tls.method = pjsip_ssl_method.PJSIP_TLSV1_3_METHOD
+                tls.method = pjsip_ssl_method.PJSIP_SSL_UNSPECIFIED_METHOD
                 // Accept self-signed / internal CA certs common on private PBX installs.
                 // Set true + supply caListFile when connecting to a public server with a
                 // real cert (prevents MITM).
-                tls.verifyServer = false
+
+                val caPem = readRawText(R.raw.ca_bundle)
+                tls.verifyServer = true
+                tls.caBuf = caPem
+                //tls.serverName = "esports.hobenaki.com"
                 tlsCfg.tlsConfig = tls
                 ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_TLS, tlsCfg)
                 listener.onLog("TLS transport ready on port 5061")

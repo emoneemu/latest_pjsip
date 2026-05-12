@@ -70,7 +70,7 @@ class SipCallService : Service() {
         // 3. NOW initialize PJSIP. The UDP socket is created under the
         //    phoneCall foreground service umbrella → Samsung allows it.
         if (pjsipInstance == null) {
-            val pj = PjsipManager(ServiceListener)
+            val pj = PjsipManager(applicationContext,ServiceListener)
             pj.start()
             pjsipInstance = pj
         }

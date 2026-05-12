@@ -52,3 +52,8 @@ proguard/
 
 # OS
 Thumbs.db
+
+
+.idea/
+.idea/codeStyles/codeStyleConfig.xml
+.idea/codeStyles/Project.xml
